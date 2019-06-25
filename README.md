@@ -7,8 +7,8 @@ The structures present in the project will be described below.
 
 The dataset folder has two subfolders, AG_HAM_240x180 and AG_HAM_300x225, which contain preprocessed and augmented images of melanomas and non-melanomas.
 
-**AG_HAM_240x180** contains 8000 images of 240x180 size, 50% of which are melanomas and the remaining 50% are non-melanomas.\n
-**AG_HAM_300x225** contains 7000 images of 300x225 size, 50% of which are melanomas and the remaining 50% are non-melanomas.
+-**AG_HAM_240x180** contains 8000 images of 240x180 size, 50% of which are melanomas and the remaining 50% are non-melanomas.
+-**AG_HAM_300x225** contains 7000 images of 300x225 size, 50% of which are melanomas and the remaining 50% are non-melanomas.
 In both cases, the reference images were taken from the **HAM10000 dataset**, which was made available by the University of Harvard.
 There is also a csv file, **AGHAM_metadata**, which contains information about the images, including the corresponding labels.
 
