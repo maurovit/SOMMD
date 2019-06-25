@@ -1,0 +1,164 @@
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
+import logging
+import random
+import time
+import math
+import glob
+import susi
+import cv2
+
+SEED=123
+
+def load_dataset(imgs_path,labels_path):
+    all_labels = load_dataset_labels(labels_path)
+
+    random.seed(SEED)
+    # Random ordering for images
+    random_images_selection = glob.glob(imgs_path+"*.jpg")
+    random.shuffle(random_images_selection)
+
+    images = []
+    dataset_labels=[]
+    img_shape=None
+
+    for img_name in random_images_selection:
+        img = cv2.imread(img_name,cv2.IMREAD_COLOR)
+        key=img_name.split("\\")[1].split(".")[0]
+        dataset_labels.append(binarize_label(all_labels[key]))
+        if(len(images)==0):
+            img_shape=img.shape
+        # Normalizzazione immagini in maniera che ogni
+        # pixel abbia valore nel range [0,1]
+        norm_img = cv2.normalize(img, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        # Trasformazione in array 1-D
+        reshaped_norm_img=norm_img.ravel()
+        images.append(reshaped_norm_img)
+
+    return images,dataset_labels,img_shape
+
+def split_dataset(dataset,labels,test_data_start,val_data_start):
+    x_train=dataset[:val_data_start]
+    y_train=labels[:val_data_start]
+    x_test=dataset[test_data_start:]
+    y_test=labels[test_data_start:]
+    x_val=dataset[val_data_start:test_data_start]
+    y_val=labels[val_data_start:test_data_start]
+
+    return x_train,x_test,x_val,y_train,y_test,y_val
+
+def load_dataset_labels(path):
+    df=pd.read_csv(path)
+    labels_list=[]
+    for im_id,label in zip(df['image_id'],df['dx']):
+        labels_list.append((im_id,label))
+    return dict(labels_list)
+
+def binarize_label(label):
+    if not label=='mel':
+        return 0
+    else:
+        return 1
+
+def plot_roc_curve(fpr, tpr):
+    plt.plot(fpr, tpr, color='orange', label='ROC')
+    plt.plot([0, 1], [0, 1], color='darkblue', linestyle='--')
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic (ROC) Curve')
+    plt.legend()
+    plt.show()
+
+def timer(start,end):
+    hours, rem = divmod(end-start, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return hours,minutes,seconds
+
+if __name__ == "__main__":
+
+    DATASET_DIR = "dataset/"
+    HAM_DIR = "AG_HAM_300x225/"
+    CSV_DATASET_NAME = "AGHAM_metadata.csv"
+
+    ROWS_NUM = 30
+    COLUMNS_NUM = 30
+
+    SUP_TRAINING_ITERATIONS = 300
+    UNSUP_TRAINING_ITERATIONS = 300
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+    # Dataset and labels loading and splitting
+    logging.info("Loading dataset...")
+    all_images, all_labels, img_origin_shape = load_dataset(DATASET_DIR+HAM_DIR,
+                                                            DATASET_DIR+CSV_DATASET_NAME)
+    logging.info("Dataset size: {}".format(len(all_images)))
+    logging.info("Images shape: {}".format(img_origin_shape))
+
+    # Split Training set-Test set 85 - 15
+    TEST_DATA_START_INDEX=len(all_images)-math.ceil(len(all_images)*0.15)
+    # Split Training set-Validation set 85 - 15
+    VAL_DATA_START_INDEX=TEST_DATA_START_INDEX-math.ceil(TEST_DATA_START_INDEX*0.15)
+
+    x_train, x_test, x_val, y_train, y_test, y_val = split_dataset(all_images,
+                                                                   all_labels,
+                                                                   TEST_DATA_START_INDEX,
+                                                                   VAL_DATA_START_INDEX)
+    logging.info("Training set size: {}".format(len(x_train)))
+    logging.info("Training set composition: {} Melanoma - {} Not Melanoma".format(y_train.count(1),
+                                                                                  y_train.count(0)))
+    logging.info("Test set size: {}".format(len(x_test)))
+    logging.info("Test set composition: {} Melanoma - {} Not Melanoma".format(y_test.count(1),
+                                                                              y_test.count(0)))
+    logging.info("Validation set size: {}".format(len(x_val)))
+    logging.info("Validation set composition: {} Melanoma - {} Not Melanoma".format(y_val.count(1),
+                                                                                    y_val.count(0)))
+
+    # Init SOM network
+    som=susi.SOMClassifier(n_rows=ROWS_NUM,
+                           n_columns=COLUMNS_NUM,
+                           n_iter_unsupervised=UNSUP_TRAINING_ITERATIONS,
+                           n_iter_supervised=SUP_TRAINING_ITERATIONS,
+                           learning_rate_start=0.5,
+                           learning_rate_end=0.01,
+                           random_state=None)
+
+    logging.info("SOM's model creation process started")
+    logging.info("Training started...")
+    start_time=time.time()
+    som=som.fit(x_train,y_train)
+    end_time=time.time()
+    h,m,s=timer(start_time,end_time)
+    logging.info("Model successfully created!")
+    logging.info("Elapsed time for training: {}h {}m {}s".format(int(h),int(m),int(s)))
+
+    logging.info("Testing the SOM...")
+    y_test_pred=som.predict(x_test)
+    logging.info("SOM's test score : {0:.2f} %".format(som.score(x_test,y_test)*100))
+
+    logging.info("Validating the SOM...")
+    y_val_pred=som.predict(x_val)
+    logging.info("SOM's validation score : {0:.2f} %".format(som.score(x_val,y_val)*100))
+
+    y_testval=np.concatenate((y_test,y_val))
+    y_testval_pred=np.concatenate((y_test_pred,y_val_pred))
+    if y_testval_pred.tolist().count(-1)==0:
+        tn, fp, fn, tp = confusion_matrix(y_testval,y_testval_pred).ravel()
+        sensitivity=tp/(tp+fn)
+        specificity=tn/(tn+fp)
+        logging.info("SOM's sensitivity: {0:.2f} %".format(sensitivity*100))
+        logging.info("SOM's specificity: {0:.2f} %".format(specificity*100))
+
+    logging.info("Building U-Matrix...")
+    u_matrix = som.get_u_matrix()
+    plt.imshow(np.squeeze(u_matrix))
+    plt.title("U-Matrix {}x{} \n{} Supervised Iterations \n{} Unsupervised Iterations"
+              .format(ROWS_NUM,
+                      COLUMNS_NUM,
+                      SUP_TRAINING_ITERATIONS,
+                      UNSUP_TRAINING_ITERATIONS))
+    plt.colorbar()
+    plt.show()
+    logging.info("U-Matrix builded!")
